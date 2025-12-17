@@ -1,83 +1,49 @@
-# src/data_processing.py
-
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
 
-sns.set(style="whitegrid")
+def create_aggregate_features(df):
+    if 'CustomerId' not in df.columns:
+        raise ValueError(f"'CustomerId' not found in dataframe. Columns: {df.columns}")
 
+    # Aggregate numeric features by CustomerId
+    agg_df = df.groupby("CustomerId").agg({
+        "Amount": ["sum", "mean", "max"],
+        "Value": ["sum", "mean", "max"]
+    })
 
-def load_data(filepath, nrows=None):
-    """Load CSV data with basic error handling."""
-    try:
-        df = pd.read_csv(filepath, nrows=nrows)
-        print(f"Data loaded successfully. Shape: {df.shape}")
-        return df
-    except FileNotFoundError:
-        print(f"File not found: {filepath}")
-        return None
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        return None
+    # Flatten MultiIndex columns
+    agg_df.columns = ["_".join(col).strip() for col in agg_df.columns.values]
+    agg_df.reset_index(inplace=True)
+    return agg_df
 
+def prepare_model_data(df):
+    # Add aggregated features
+    agg_df = create_aggregate_features(df)
+    df = df.merge(agg_df, on="CustomerId", how="left")
 
-def plot_numerical_distribution(df, numerical_cols):
-    """Plot numerical columns with histogram and KDE."""
-    for col in numerical_cols:
-        plt.figure(figsize=(6, 4))
-        sns.histplot(df[col], kde=True, bins=50)
-        plt.title(f'Distribution of {col}')
-        plt.show()
+    # Features and target
+    target_col = "FraudResult"
+    y = df[target_col]
+    X = df.drop(columns=[target_col])
 
+    # Identify categorical and numerical columns
+    categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
+    numerical_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
 
-def plot_categorical_distribution(df, categorical_cols):
-    """Plot categorical columns with count plots."""
-    for col in categorical_cols:
-        plt.figure(figsize=(7, 4))
-        sns.countplot(y=df[col], data=df, order=df[col].value_counts().index)
-        plt.title(f'Distribution of {col}')
-        plt.show()
+    # Remove CustomerId and other identifiers from features
+    for col in ["CustomerId", "TransactionId", "AccountId", "SubscriptionId", "BatchId"]:
+        if col in categorical_cols:
+            categorical_cols.remove(col)
+        if col in numerical_cols:
+            numerical_cols.remove(col)
 
+    # Preprocessor
+    preprocessor = ColumnTransformer(transformers=[
+        ("num", StandardScaler(), numerical_cols),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols)
+    ])
 
-def correlation_matrix(df, numerical_cols):
-    """Plot correlation heatmap of numerical columns."""
-    plt.figure(figsize=(5, 4))
-    corr_matrix = df[numerical_cols].corr()
-    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-    plt.title("Correlation Matrix")
-    plt.show()
-
-
-def missing_values(df):
-    """Print missing values per column."""
-    missing = df.isnull().sum()
-    print("\nMissing values per column:\n", missing)
-
-
-def outlier_boxplot(df, numerical_cols):
-    """Plot boxplots for numerical columns to detect outliers."""
-    for col in numerical_cols:
-        plt.figure(figsize=(6, 4))
-        sns.boxplot(x=df[col])
-        plt.title(f'Boxplot of {col}')
-        plt.show()
-
-
-def calculate_rfm(df):
-    """Compute RFM features for customers."""
-    df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
-
-    # Recency
-    last_transaction = df.groupby('CustomerId')['TransactionStartTime'].max().reset_index()
-    last_transaction['Recency'] = (df['TransactionStartTime'].max() - last_transaction['TransactionStartTime']).dt.days
-
-    # Frequency
-    frequency = df.groupby('CustomerId')['TransactionId'].count().reset_index().rename(columns={'TransactionId': 'Frequency'})
-
-    # Monetary
-    monetary = df.groupby('CustomerId')['Amount'].sum().reset_index().rename(columns={'Amount': 'Monetary'})
-
-    # Merge RFM
-    rfm = last_transaction.merge(frequency, on='CustomerId').merge(monetary, on='CustomerId')
-    return rfm
-
+    X_processed = preprocessor.fit_transform(X)
+    return X_processed, y, preprocessor
