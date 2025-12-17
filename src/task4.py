@@ -1,24 +1,62 @@
 # task4.py
+# RFM-based target creation (parameterized and robust)
+
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-import datetime
+import argparse
+import os
 
 # ------------------------------
-# Step 0: Load raw transaction data
+# Step 0: Parse arguments / parameters
 # ------------------------------
-file_path = r"C:\Users\sciec\Credit-Risk-Probability-Model-for-Alternative-Data\Data\raw\data.csv"
-df = pd.read_csv(file_path)
+parser = argparse.ArgumentParser(description="RFM Target Creation")
+parser.add_argument(
+    "--raw_data", default="Data/raw/data.csv",
+    help="Path to raw transaction CSV"
+)
+parser.add_argument(
+    "--processed_data", default="processed_customer_level_woe.csv",
+    help="Path to processed customer-level CSV from Task 3"
+)
+parser.add_argument(
+    "--output", default="processed_customer_with_target.csv",
+    help="Output CSV with target"
+)
+parser.add_argument(
+    "--snapshot_date", default=None,
+    help="Reference date for RFM (YYYY-MM-DD). Defaults to last transaction + 1 day"
+)
+parser.add_argument(
+    "--n_clusters", type=int, default=3,
+    help="Number of KMeans clusters"
+)
+args = parser.parse_args()
 
-# Parse datetime column
+# ------------------------------
+# Step 1: Ensure output directory exists (fix for Windows)
+# ------------------------------
+output_dir = os.path.dirname(args.output)
+if output_dir != "":
+    os.makedirs(output_dir, exist_ok=True)
+
+# ------------------------------
+# Step 2: Load raw transaction data
+# ------------------------------
+df = pd.read_csv(args.raw_data)
 df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'], errors='coerce')
 
 # ------------------------------
-# Step 1: Calculate RFM metrics per customer
+# Step 3: Define snapshot date
 # ------------------------------
-# Define snapshot date as one day after last transaction
-snapshot_date = df['TransactionStartTime'].max() + pd.Timedelta(days=1)
+if args.snapshot_date:
+    snapshot_date = pd.to_datetime(args.snapshot_date)
+else:
+    snapshot_date = df['TransactionStartTime'].max() + pd.Timedelta(days=1)
 
+# ------------------------------
+# Step 4: Calculate RFM metrics per customer
+# ------------------------------
 rfm = df.groupby('CustomerId').agg(
     recency=('TransactionStartTime', lambda x: (snapshot_date - x.max()).days),
     frequency=('TransactionId', 'count'),
@@ -26,44 +64,37 @@ rfm = df.groupby('CustomerId').agg(
 ).reset_index()
 
 # ------------------------------
-# Step 2: Scale RFM features for clustering
+# Step 5: Scale RFM features for clustering
 # ------------------------------
 scaler = StandardScaler()
 rfm_scaled = scaler.fit_transform(rfm[['recency', 'frequency', 'monetary']])
 
 # ------------------------------
-# Step 3: K-Means clustering into 3 groups
+# Step 6: K-Means clustering
 # ------------------------------
-kmeans = KMeans(n_clusters=3, random_state=42)
+kmeans = KMeans(n_clusters=args.n_clusters, random_state=42)
 rfm['cluster'] = kmeans.fit_predict(rfm_scaled)
 
 # ------------------------------
-# Step 4: Identify high-risk cluster
+# Step 7: Identify high-risk cluster
 # ------------------------------
-# Analyze cluster RFM means
 cluster_summary = rfm.groupby('cluster').agg(
     recency_mean=('recency', 'mean'),
     frequency_mean=('frequency', 'mean'),
     monetary_mean=('monetary', 'mean')
 ).sort_values('recency_mean', ascending=False)
 
-print("Cluster summary (for identifying high-risk cluster):")
-print(cluster_summary)
-
-# High-risk cluster: highest recency, lowest frequency & monetary
-high_risk_cluster = cluster_summary.index[0]  # first row after sorting by recency
-
-# Assign binary target
+high_risk_cluster = cluster_summary.index[0]
 rfm['is_high_risk'] = (rfm['cluster'] == high_risk_cluster).astype(int)
 
 # ------------------------------
-# Step 5: Merge target into processed customer-level dataset
+# Step 8: Merge target into processed customer-level dataset
 # ------------------------------
-processed_df = pd.read_csv('processed_customer_level.csv')
-
-# Merge is_high_risk
+processed_df = pd.read_csv(args.processed_data)
 processed_df = processed_df.merge(rfm[['CustomerId', 'is_high_risk']], on='CustomerId', how='left')
 
-# Save updated dataset
-processed_df.to_csv('processed_customer_with_target.csv', index=False)
-print("Target variable 'is_high_risk' added. Saved to 'processed_customer_with_target.csv'.")
+# ------------------------------
+# Step 9: Save updated dataset
+# ------------------------------
+processed_df.to_csv(args.output, index=False)
+print(f"Target variable 'is_high_risk' added. Saved to '{args.output}'.")
