@@ -8,25 +8,28 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # Use ubuntu-latest; Windows handled separately if needed
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # Set Python 3.11
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
       - name: Install dependencies
         run: |
-          # Remove Windows-only packages if running on Linux
-          pip install --no-cache-dir $(grep -v "pywin32" requirements.txt || echo "")
-      
+          python -m pip install --upgrade pip
+          # Install all requirements except pywin32
+          pip install $(grep -v pywin32 requirements.txt || true)
+          # If on Windows, install pywin32
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            pip install pywin32==311
+          fi
+
       - name: Run tests
         run: |
-          pytest --maxfail=1 --disable-warnings -q
+          pytest
