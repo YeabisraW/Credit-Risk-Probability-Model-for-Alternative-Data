@@ -1,0 +1,44 @@
+name: Full CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Checkout code
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # Step 2: Set up Python
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.13
+
+    # Step 3: Install dependencies
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8 pytest mlflow joblib numpy pandas scikit-learn
+
+    # Step 4: Lint your code
+    - name: Run Linter (flake8)
+      run: |
+        flake8 src tests --max-line-length=120
+
+    # Step 5: Run unit tests
+    - name: Run Unit Tests (pytest)
+      run: |
+        pytest tests --maxfail=1 --disable-warnings -q
+
+    # Step 6: (Optional) Run MLflow sanity check
+    - name: MLflow experiment check
+      run: |
+        python -c "import mlflow; mlflow.set_experiment('Credit_Risk_Testing'); print('MLflow ready')"
